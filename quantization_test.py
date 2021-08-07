@@ -18,7 +18,7 @@ import torch.nn.functional as F
 from pytorchcv.model_provider import get_model as ptcv_get_model
 from quantize_model import *
 from data_utils import *
-from train_utils import *
+from train import *
 from quant_utils import *
 from visualization import *
 #from torchsummary import summary
@@ -243,7 +243,7 @@ if __name__ == '__main__':
     # Load validation data
     test_loader = getTestData(args.dataset,
                               batch_size=args.test_batch_size,
-                              path='/home/jovyan/data-vol-1/',
+                              path='/home/jovyan/new-quant-static-vol-1/',
                               for_inception=args.model.startswith('inception'))
     begin = time.time()
     # Load training data
@@ -251,7 +251,7 @@ if __name__ == '__main__':
         print('Get train data')
         dataloader = getTrainData(args.dataset,
                                   batch_size=args.batch_size,
-                                  path='/home/jovyan/data-vol-1',
+                                  path='/home/jovyan/new-quant-static-vol-1/',
                                   for_inception=args.model.startswith('inception'))
 
     if args.data_source == 'random':

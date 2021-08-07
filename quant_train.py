@@ -11,8 +11,12 @@ import torch
 import numpy as np
 import torch.nn as nn
 from pytorchcv.model_provider import get_model as ptcv_get_model
-from utils import *
-from distill_data import *
+from quant_utils import *
+from data_utils import *
+from train import *
+from quantize_model import *
+import os
+import sys
 os.environ["CUDA_VISIBLE_DEVICES"]="0,1,2,3"
 
 # model settings
@@ -91,12 +95,12 @@ if __name__ == '__main__':
     # Load training data
     train_loader = getTrainData(args.dataset,
                               batch_size=args.train_batch_size,
-                              path='./data/imagenet/',
+                              path='/home/jovyan/new-quant-static-vol-1/',
                               for_inception=args.model.startswith('inception'))
     # Load validation data
     test_loader = getTestData(args.dataset,
                               batch_size=args.test_batch_size,
-                              path='./data/imagenet/',
+                              path='/home/jovyan/new-quant-static-vol-1/',
                               for_inception=args.model.startswith('inception'))
 
     print('****** Data loaded ******')
@@ -118,28 +122,34 @@ if __name__ == '__main__':
     args.loss_function = criterion_smooth
     args.optimizer     = optimizer
     args.scheduler     = scheduler
-
-    quantized_model = quantize_model(model, first_layer=True)
+    quan_tool = QuanModel()
+    quantized_model = quan_tool.quantize_model(model)
+    #print(quantized_model)
+    #quantized_model = quantize_model(model, first_layer=True)
     quantized_model = nn.DataParallel(quantized_model).cuda()
-    quantized_model.train()
+    #quantized_model.train()
+    acc = test(quantized_model, test_loader)
+    print('quantized model accuracy', acc)
 
     best_acc = 0
     if args.init_test:
         acc = test(model, test_loader)
+        print('FP model accuracy', acc)
 
-    for epoch in range(args.epochs):
+    """for epoch in range(args.epochs):
         print('epoch no', epoch)
         acc, loss = train(quantized_model, train_loader, args, test_loader)
         print(f"Epoch {epoch}: loss = {loss:4f}, top1_accuracy = {acc*100:4f}, learning_rate = {args.scheduler.get_last_lr()[0]}")
-        if (epoch+1) % args.eval_interval == 0:
-            acc = test(quantized_model, test_loader)
+        #if (epoch+1) % args.eval_interval == 0:
+        acc = test(quantized_model, test_loader)
 
-            if acc > best_acc:
-                best_acc = acc
-                save_path = os.path.join(args.dataset, args.save)
-                if not os.path.exists(save_path):
-                    os.makedirs(save_path)
-                filename = os.path.join( save_path, "bestmodel.pth.tar")
-                torch.save({'state_dict': model.state_dict(),}, filename)
+        if acc > best_acc:
+            best_acc = acc
+            save_path = os.path.join(args.dataset, args.save)
+            print(save_path)
+            if not os.path.exists(save_path):
+                os.makedirs(save_path)
+            filename = os.path.join( save_path, "bestmodel.pth.tar")
+            torch.save({'state_dict': model.state_dict(),}, filename)"""
 
 

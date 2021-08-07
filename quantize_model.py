@@ -20,7 +20,7 @@ class QuanModel():
         self.weight_num = [] # TODO
         #self.percentile = percentile
 
-    def quantize_model(self, (model, integer_only=True):
+    def quantize_model(self, model, integer_only=True):
         """
         Recursively quantize a pretrained single-precision model to int8 quantized model
         model: pretrained single-precision model
@@ -28,8 +28,10 @@ class QuanModel():
         # quantize convolutional and linear layers to 8-bit
         if type(model) == nn.Conv2d:
             if integer_only:
+                print('integer_only')
                 quant_mod = Quant_Conv2d_Int(weight_bit=8)
             else:
+                print('not QAT')
                 quant_mod = Quant_Conv2d(weight_bit=8)
             quant_mod.set_param(model)
             self.quan_weight_layers.append(quant_mod)

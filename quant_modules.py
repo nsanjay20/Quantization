@@ -13,7 +13,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Module, Parameter
-from .quant_utils import *
+from quant_utils import *
 import sys
 
 
@@ -159,7 +159,7 @@ class Quant_Conv2d(Module):
         w_max = x_transform.max(dim=1).values
         if self.full_precision_flag:
             w = self.weight
-         else:
+        else:
             w = self.weight_function(self.weight, self.weight_bit, w_min,
                                      w_max)   
 
@@ -176,7 +176,7 @@ class QuantAct_Int(Module):
     def __init__(self,
                  activation_bit,
                  full_precision_flag=False,
-                 running_stat=True,
+                 running_stat=False,
                  integer_only=True):
         """
         activation_bit: bit-setting for activation
@@ -269,7 +269,7 @@ class Quant_Linear_Int(Module):
         if self.full_precision_flag:
             w = self.weight
             return F.linear(x, weight=w, bias=self.bias)
-         else:
+        else:
             # x is asymmetric quantization with range [0,255]
             # new_quant_x = linear_quantize(x, scale_x, torch.zeros(1).cuda())
             new_quant_x = self.quantfunc(x, scale_x, torch.zeros(1).cuda())

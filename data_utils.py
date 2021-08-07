@@ -56,7 +56,7 @@ def getRandomData(dataset='cifar10', batch_size=512, for_inception=False):
 
 def getTestData(dataset='imagenet',
                 batch_size=1024,
-                path='/home/jovyan/data-vol-1/',
+                path='/home/jovyan/new-quant-static-vol-1/',
                 for_inception=False):
     """
     Get dataloader of testset 
@@ -83,7 +83,7 @@ def getTestData(dataset='imagenet',
                                  num_workers=2)
         return test_loader
     elif dataset == 'cifar10':
-        data_dir = '/home/jovyan/data-vol-1/cifar10/'
+        data_dir = '/home/jovyan/new-quant-static-vol-1/CIFAR10/'
         normalize = transforms.Normalize(mean=(0.4914, 0.4822, 0.4465),
                                          std=(0.2023, 0.1994, 0.2010))
         transform_test = transforms.Compose([transforms.ToTensor(), normalize])
@@ -100,7 +100,7 @@ def getTestData(dataset='imagenet',
 
 def getTrainData(dataset='imagenet',
                 batch_size=1024,
-                path='/home/jovyan/data-vol-1',
+                path='/home/jovyan/new-quant-static-vol-1/',
                 for_inception=False):
     if dataset == 'imagenet':
         input_size = 299 if for_inception else 224
@@ -121,7 +121,7 @@ def getTrainData(dataset='imagenet',
         return train_loader
 
     elif dataset == 'cifar10':
-        data_dir = '/home/jovyan/data-vol-1/cifar10/'
+        data_dir = '/home/jovyan/new-quant-static-vol-1/CIFAR10/'
         normalize = transforms.Normalize(mean=(0.4914, 0.4822, 0.4465),
                                          std=(0.2023, 0.1994, 0.2010))
         transform_test = transforms.Compose([transforms.ToTensor(), normalize])

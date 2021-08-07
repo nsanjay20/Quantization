@@ -10,6 +10,7 @@ import math
 import numpy as np
 from torch.autograd import Function, Variable
 import torch
+import torch.nn as nn
 
 
 def clamp(input_x, min, max, inplace=False):
@@ -17,7 +18,6 @@ def clamp(input_x, min, max, inplace=False):
     Clamp tensor x to (min, max).
     input_x: x tensor to be clamped
     """
-
     if inplace:
         input_x.clamp_(min, max)
         return input_x
@@ -122,7 +122,7 @@ class AsymmetricQuantFunction(Function):
         #print('quant_x', len(quant_x))
         #quant_x_array = quant_x.cpu().detach.numpy()
         #print('quantized_x', quant_x_array)
-        return torch.autograd.Variable(new_quant_x)
+        return torch.autograd.Variable(quant_x)
 
     @staticmethod
     def backward(ctx, grad_output):
