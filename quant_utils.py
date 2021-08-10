@@ -1,375 +1,297 @@
 #-------------------------------------------------------------------------------
 # Author:     Namratha Sanjay
-# Name:       perform quantization
-# Purpose:    This module perform quantization.
+# Name:       linear quantization helper functions
+# Purpose:    linear quantization helper functions
 # Copyright:   (c) Volvo cars 
 # History:
 #-------------------------------------------------------------------------------
 
-import torch
-import time
 import math
 import numpy as np
+from torch.autograd import Function, Variable
+import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn import Module, Parameter
-from quant_utils import *
-import sys
+import matplotlib.pyplot as plt
 
-
-
-class QuantAct(Module):
+def clamp(input, min, max, inplace=False):
     """
-    Class to quantize given activations
+    Clamp tensor input to (min, max).
+    input: input tensor to be clamped
     """
-    def __init__(self,
-                 activation_bit,
-                 full_precision_flag=False,
-                 running_stat=True):
-        """
-        activation_bit: bit-setting for activation
-        full_precision_flag: full precision or not
-        running_stat: determines whether the activation range is updated or froze
-        """
-        super(QuantAct, self).__init__()
-        self.bit = activation_bit
-        self.full_precision_flag = full_precision_flag
-        self.running_stat = running_stat
-        self.register_buffer('x_min', torch.zeros(1))
-        self.register_buffer('x_max', torch.zeros(1))
-        self.act_function = AsymmetricQuantFunction.apply
 
-    def __repr__(self):
-        return "{0}(activation_bit={1}, full_precision_flag={2}, running_stat={3}, Act_min: {4:.2f}, Act_max: {5:.2f})".format(
-            self.__class__.__name__, self.bit,
-            self.full_precision_flag, self.running_stat, self.x_min.item(),
-            self.x_max.item())
-
-    def fix(self):
-        """
-        fix the activation range by setting running stat
-        """
-        self.running_stat = False
-
-    def unfix(self):
-        self.running_stat = True
-
-    def forward(self, x):
-        """
-        quantize given activation x
-        """
-        if self.full_precision_flag:
-            return x
-        if self.running_stat:
-            x_min = x.data.min()
-            x_max = x.data.max()
-            # in-place operation used on multi-gpus
-            self.x_min += -self.x_min + min(self.x_min, x_min)
-            self.x_max += -self.x_max + max(self.x_max, x_max)
-
-        quant_act = self.act_function(x, self.bit, self.x_min,
-                                      self.x_max)
-        return quant_act
+    if inplace:
+        input.clamp_(min, max)
+        return input
+    return torch.clamp(input, min, max)
 
 
-
-class Quant_Linear(Module):
+def linear_quantize(input, scale, zero_point, inplace=False):
     """
-    Class to quantize given linear layer weights
+    Quantize single-precision input tensor to integers with the given scaling factor and zeropoint.
+    input: single-precision input tensor to be quantized
+    scale: scaling factor for quantization
+    zero_pint: shift for quantization
     """
-    def __init__(self, weight_bit, full_precision_flag=False):
-        """
-        weight: bit-setting for weight
-        full_precision_flag: full precision or not
-        running_stat: determines whether the activation range is updated or froze
-        """
-        super(Quant_Linear, self).__init__()
-        self.full_precision_flag = full_precision_flag
-        self.bit = weight_bit
-        self.weight_function = AsymmetricQuantFunction.apply
 
-    def __repr__(self):
-        s = super(Quant_Linear, self).__repr__()
-        s = "(" + s + " weight_bit={}, full_precision_flag={})".format(
-            self.bit, self.full_precision_flag)
-        return s
-
-    def set_param(self, linear):
-        self.in_features = linear.in_features
-        self.out_features = linear.out_features
-        self.weight = Parameter(linear.weight.data.clone())
-        try:
-            self.bias = Parameter(linear.bias.data.clone())
-        except AttributeError:
-            self.bias = None
-
-    def forward(self, x):
-        """
-        using quantized weights to forward activation x
-        """
-        w = self.weight
-        if self.full_precision_flag:
-            return F.linear(x, weight=w, bias=self.bias)
-        x_transform = w.data.detach()
-        w_min = x_transform.min(dim=1).values
-        w_max = x_transform.max(dim=1).values
-        w = self.weight_function(self.weight, self.bit, w_min,
-                                     w_max)
-        return F.linear(x, weight=w, bias=self.bias)
-        
+    # reshape scale and zeropoint for convolutional weights and activation
+    if len(input.shape) == 4:
+        scale = scale.view(-1, 1, 1, 1)
+        zero_point = zero_point.view(-1, 1, 1, 1)
+    # reshape scale and zeropoint for linear weights
+    elif len(input.shape) == 2:
+        scale = scale.view(-1, 1)
+        zero_point = zero_point.view(-1, 1)
+    # mapping single-precision input to integer values with the given scale and zeropoint
+    if inplace:
+        input.mul_(scale).sub_(zero_point).round_()
+        return input
+    return torch.round(scale * input - zero_point)
 
 
-class Quant_Conv2d(Module):
+def linear_dequantize(input, scale, zero_point, inplace=False):
     """
-    Class to quantize given convolutional layer weights
+    Map integer input tensor to fixed point float point with given scaling factor and zeropoint.
+    input: integer input tensor to be mapped
+    scale: scaling factor for quantization
+    zero_pint: shift for quantization
     """
-    def __init__(self, weight_bit, full_precision_flag=False):
-        super(Quant_Conv2d, self).__init__()
-        self.full_precision_flag = full_precision_flag
-        self.bit = weight_bit
-        self.weight_function = AsymmetricQuantFunction.apply
 
-    def __repr__(self):
-        s = super(Quant_Conv2d, self).__repr__()
-        s = "(" + s + " weight_bit={}, full_precision_flag={})".format(
-            self.bit, self.full_precision_flag)
-        return s
-
-    def set_param(self, conv):
-        self.in_channels = conv.in_channels
-        self.out_channels = conv.out_channels
-        self.kernel_size = conv.kernel_size
-        self.stride = conv.stride
-        self.padding = conv.padding
-        self.dilation = conv.dilation
-        self.groups = conv.groups
-        self.weight = Parameter(conv.weight.data.clone())
-        try:
-            self.bias = Parameter(conv.bias.data.clone())
-        except AttributeError:
-            self.bias = None
-
-    def forward(self, x):
-        """
-        using quantized weights to forward activation x
-        """
-        w = self.weight
-        if self.full_precision_flag:
-            return F.conv2d(x, w, self.bias, self.stride, self.padding,
-                            self.dilation, self.groups)
-        x_transform = w.data.contiguous().view(self.out_channels, -1)
-        w_min = x_transform.min(dim=1).values
-        w_max = x_transform.max(dim=1).values
-        w = self.weight_function(self.weight, self.bit, w_min,
-                                     w_max)
-        return F.conv2d(x, w, self.bias, self.stride, self.padding,
-                        self.dilation, self.groups)
+    # reshape scale and zeropoint for convolutional weights and activation
+    if len(input.shape) == 4:
+        scale = scale.view(-1, 1, 1, 1)
+        zero_point = zero_point.view(-1, 1, 1, 1)
+    # reshape scale and zeropoint for linear weights
+    elif len(input.shape) == 2:
+        scale = scale.view(-1, 1)
+        zero_point = zero_point.view(-1, 1)
+    # mapping integer input to fixed point float point value with given scaling factor and zeropoint
+    if inplace:
+        input.add_(zero_point).div_(scale)
+        return input
+    return (input + zero_point) / scale
 
 
-# Integer Only Implementation
-class QuantAct_Int(Module):
+def asymmetric_linear_quantization_params(num_bits,
+                                          saturation_min,
+                                          saturation_max,
+                                          integral_zero_point=True,
+                                          signed=True):
     """
-    Class to quantize given activations
+    Compute the scaling factor and zeropoint with the given quantization range.
+    saturation_min: lower bound for quantization range
+    saturation_max: upper bound for quantization range
     """
-    def __init__(self,
-                 activation_bit,
-                 full_precision_flag=False,
-                 running_stat=True,
-                 integer_only=True):
-        """
-        activation_bit: bit-setting for activation
-        full_precision_flag: full precision or not
-        running_stat: determines whether the activation range is updated or froze
-        """
-        super(QuantAct_Int, self).__init__()
-        self.activation_bit = activation_bit
-        self.momentum = 0.99
-        self.full_precision_flag = full_precision_flag
-        self.running_stat = running_stat
-        self.register_buffer('x_min', torch.zeros(1))
-        self.register_buffer('x_max', torch.zeros(1))
-        self.act_function = AsymmetricQuantFunction_Int.apply
+    n = 2**num_bits - 1
+    scale = n / torch.clamp((saturation_max - saturation_min), min=1e-8)
+    zero_point = scale * saturation_min
 
-    def __repr__(self):
-        return "{0}(activation_bit={1}, full_precision_flag={2}, running_stat={3}, Act_min: {4:.2f}, Act_max: {5:.2f})".format(
-            self.__class__.__name__, self.activation_bit,
-            self.full_precision_flag, self.running_stat, self.x_min.item(),
-            self.x_max.item())
-
-    def fix(self):
-        """
-        fix the activation range by setting running stat
-        """
-        self.running_stat = False
-
-    def forward(self, x):
-        """
-        quantize given activation x
-        """
-        if self.full_precision_flag:
-            return x
-
-        if self.running_stat:
-            x_min = x.data.min()
-            x_max = x.data.max()
-            # in-place operation used on multi-gpus
-            self.x_min += -self.x_min + min(self.x_min, x_min)
-            self.x_max += -self.x_max + max(self.x_max, x_max)
-
-        quant_act = self.act_function(x, self.activation_bit, self.x_min,
-                                      self.x_max)
-        return quant_act
-        
-            
-
-
-class Quant_Linear_Int(Module):
-    """
-    Class to quantize given linear layer weights
-    """
-    def __init__(self, weight_bit, full_precision_flag=False):
-        """
-        weight: bit-setting for weight
-        full_precision_flag: full precision or not
-        running_stat: determines whether the activation range is updated or froze
-        """
-        super(Quant_Linear_Int, self).__init__()
-        self.full_precision_flag = full_precision_flag
-        self.weight_bit          = weight_bit
-
-    def __repr__(self):
-        s = super(Quant_Linear_Int, self).__repr__()
-        s = "(" + s + " weight_bit={}, full_precision_flag={})".format(
-            self.weight_bit, self.full_precision_flag)
-        return s
-
-    def set_param(self, linear):
-        self.in_features = linear.in_features
-        self.out_features = linear.out_features
-        self.weight = Parameter(linear.weight.data.clone())
-        try:
-            self.bias = Parameter(linear.bias.data.clone())
-        except AttributeError:
-            self.bias = None
-        self.quantfunc   = LinearQuantizeModule()
-        self.dequantfunc = LinearDequantizeModule()
-
-    def forward(self, x):
-        """
-        using quantized weights to forward activation x
-        """
-        w = self.weight
-        x_transform = w.data.detach()
-        w_min = x_transform.min(dim=1).values
-        w_max = x_transform.max(dim=1).values
-
-        x_max = x.data.detach().max()
-        n = 2**(self.weight_bit)
-        scale_x = (n-1) / torch.clamp(x_max, min=1e-8)
-
-        if self.full_precision_flag:
-            w = self.weight
-            return F.linear(x, weight=w, bias=self.bias)
+    if integral_zero_point:
+        if isinstance(zero_point, torch.Tensor):
+            zero_point = zero_point.round()
         else:
-            print('calculantion linear')
-            # x is asymmetric quantization with range [0,255]
-            # new_quant_x = linear_quantize(x, scale_x, torch.zeros(1).cuda())
-            new_quant_x = self.quantfunc(x, scale_x, torch.zeros(1).cuda())
-            new_quant_w, scale_w, zero_point_w = quantize_int(self.weight, self.weight_bit, w_min, w_max)
+            zero_point = float(round(zero_point))
+    if signed:
+        zero_point += 2**(num_bits - 1)
+    return scale, zero_point
 
-            # bias is symmetric quantization with range [-128,127]
-            # new_quant_b = linear_quantize(self.bias, scale_w*scale_x, 0)
-            new_quant_b = self.quantfunc(self.bias, scale_w*scale_x, 0)
-            new_quant_b = torch.clamp(new_quant_b, -n - 1, n)
 
-            # TODO bias quantization
-            # print(x.shape, new_quant_x.shape, new_quant_w.shape, new_quant_b.shape)
-            mult_res = F.linear(new_quant_x, weight=new_quant_w, bias=new_quant_b)
-
-            res = mult_res + zero_point_w * new_quant_x.sum(-1).unsqueeze(-1).expand_as(mult_res)
-
-            return res / scale_x / scale_w
-            # return self.dequantfunc(res, scale_x, scale_w)
-
-class Quant_Conv2d_Int(Module):
+class AsymmetricQuantFunction_Int(Function):
     """
-    Class to quantize given convolutional layer weights
+    Class to quantize the given floating-point values with given range and bit-setting.
+    Currently only support inference, but not support back-propagation.
     """
-    def __init__(self, weight_bit, full_precision_flag=False):
-        super(Quant_Conv2d_Int, self).__init__()
-        self.full_precision_flag = full_precision_flag
-        self.weight_bit = weight_bit
-        self.weight_function = AsymmetricQuantFunction_Int.apply
-
-    def __repr__(self):
-        s = super(Quant_Conv2d_Int, self).__repr__()
-        s = "(" + s + " weight_bit={}, full_precision_flag={})".format(
-            self.weight_bit, self.full_precision_flag)
-        return s
-
-    def set_param(self, conv):
-        self.in_channels = conv.in_channels
-        self.out_channels = conv.out_channels
-        self.kernel_size = conv.kernel_size
-        self.stride = conv.stride
-        self.padding = conv.padding
-        self.dilation = conv.dilation
-        self.groups = conv.groups
-        self.weight = Parameter(conv.weight.data.clone())
-        try:
-            self.bias = Parameter(conv.bias.data.clone())
-        except AttributeError:
-            self.bias = None
-        self.quantfunc   = LinearQuantizeModule()
-        self.dequantfunc = LinearDequantizeModule()
-
-    def forward(self, x):
-
+    @staticmethod
+    def forward(ctx, x, k, x_min=None, x_max=None):
         """
-        using quantized weights to forward activation x
+        x: single-precision value to be quantized
+        k: bit-setting for x
+        x_min: lower bound for quantization range
+        x_max=None
         """
-        calc_w = self.weight
-        x_transform = calc_w.data.contiguous().view(self.out_channels, -1)
-        w_max = x_transform.max(dim=1).values
-        w_min = x_transform.min(dim=1).values
-        # range[-127,127]
-        n_w = (2**(self.weight_bit-1) - 1)
-        scale_w = n_w / torch.clamp( torch.max(abs(w_max), abs(w_min)), min=1e-8)
-        # scale_w = torch.ones(scale_w.shape).cuda()
 
-        # n_x = (2**(self.weight_bit) - 1)
-        n_x = n_w
-        x_max = x.data.detach().max()
-        x_min = x.data.detach().min()
-        scale_x = n_x / torch.clamp( max(abs(x_max), abs(x_min)), min=1e-8)
+        if x_min is None or x_max is None or (sum(x_min == x_max) == 1
+                                              and x_min.numel() == 1):
+            x_min, x_max = x.min(), x.max()
+        scale, zero_point = asymmetric_linear_quantization_params(
+            k, x_min, x_max)
+        new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
+        n = 2**(k - 1)
+        new_quant_x = torch.clamp(new_quant_x, -n, n - 1)
+        quant_x = linear_dequantize(new_quant_x,
+                                    scale,
+                                    zero_point,
+                                    inplace=False)
+        return torch.autograd.Variable(quant_x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output.clone(), None, None, None
+
+class AsymmetricQuantFunction(Function):
+    """
+    Class to quantize the given floating-point values with given range and bit-setting.
+    Currently only support inference, but not support back-propagation.
+    """
+    @staticmethod
+    def forward(ctx, x, k, x_min=None, x_max=None):
+        """
+        x: single-precision value to be quantized
+        k: bit-setting for x
+        x_min: lower bound for quantization range
+        x_max=None
+        """
+
+        if x_min is None or x_max is None or (sum(x_min == x_max) == 1
+                                              and x_min.numel() == 1):
+            x_min, x_max = x.min(), x.max()
+        scale, zero_point = asymmetric_linear_quantization_params(
+            k, x_min, x_max)
+        new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
+        n = 2**(k - 1)
+        new_quant_x = torch.clamp(new_quant_x, -n, n - 1)
+        quant_x = linear_dequantize(new_quant_x,
+                                    scale,
+                                    zero_point,
+                                    inplace=False)
+        return torch.autograd.Variable(quant_x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        raise NotImplementedError
+
+"""---------- Integer only quantization with back-propogation ---------"""
+def quantize_int(x, k, x_min=None, x_max=None):
+    if x_min is None or x_max is None or (sum(x_min == x_max) == 1 and x_min.numel() == 1):
+        x_min, x_max = x.min(), x.max()
+    scale, zero_point = asymmetric_linear_quantization_params(k, x_min, x_max)
+    quantfunc = LinearQuantizeModule()
+    # new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
+    new_quant_x = quantfunc(x, scale, zero_point, inplace=False)
+    n = 2**(k - 1)
+    # new_quant_x = torch.clamp(new_quant_x, -n, n - 1)
+    if len(scale.shape) == 0:
+        return new_quant_x, torch.Tensor([scale]), torch.Tensor([zero_point])
+    return new_quant_x, scale, zero_point
 
 
-        if self.full_precision_flag:
-            w = self.weight
-            return F.conv2d(x, w, self.bias, self.stride, self.padding,
-                        self.dilation, self.groups)
-        else:
-            # scale-only asymmetric
-            # new_quant_x = linear_quantize(x, scale_x, torch.zeros(1).cuda())
-            new_quant_x = self.quantfunc(x, scale_x, torch.zeros(1).cuda())
-            new_quant_x = torch.clamp(new_quant_x, -n_x, n_x)
-            # scale-only symmetric
+class LinearDequantizeModule(nn.Module):
+    def __init__(self):
+        super(LinearDequantizeModule, self).__init__()
 
-            # new_quant_w = linear_quantize(self.weight, scale_w, torch.zeros(1).cuda())
-            new_quant_w = self.quantfunc(self.weight, scale_w, torch.zeros(1).cuda())
-            new_quant_w = torch.clamp(new_quant_w, -n_w, n_w)
+    def forward(self, x, scale_x, scale_w):
+        print('lineardequant_forward')
+        self.M = 1 / (scale_x * scale_w)
+        M_0 = torch.round(self.M * 2**31)
+        res = ((x * M_0) << 31)
+        #print(f"M:{self.M}, M_0:{M_0}")
+        #print(res.sum())
+        #print((x*self.M).sum())
+        #exit()
+        return res
 
-            if self.bias is not None:
-                new_quant_b = self.quantfunc(self.bias, scale_w*scale_x, torch.zeros(1).cuda())
-                new_quant_b = torch.clamp(new_quant_b, -n_w, n_w)
-            else:
-                new_quant_b = None
+    def backward(self, grad_output):
+        #print('backpropogate scale',self.M * grad_output.clone())
+        return self.M * grad_output.clone(), None, None, None
 
-            # TODO bias quantization
-            # print(x.shape, new_quant_x.shape, new_quant_w.shape, new_quant_b.shape)
-            mult_res = F.conv2d(new_quant_x, new_quant_w, new_quant_b, self.stride, self.padding,
-                        self.dilation, self.groups)
 
-            return mult_res / (scale_w.view(1,-1,1,1).expand_as(mult_res)) / scale_x
-            # return self.dequantfunc(mult_res, scale_x, scale_w.view(1,-1,1,1) )
+class LinearQuantizeModule(nn.Module):
+    def __init__(self):
+        super(LinearQuantizeModule, self).__init__()
 
+    def forward(self, input, scale, zero_point, inplace=False):
+        """
+        Quantize single-precision input tensor to integers with the given scaling factor and zeropoint.
+        input: single-precision input tensor to be quantized
+        scale: scaling factor for quantization
+        zero_point: shift for quantization
+        """
+
+        # reshape scale and zeropoint for convolutional weights and activation
+        self.scale      = scale
+        self.zero_point = zero_point
+        if len(input.shape) == 4:
+            scale      = scale.view(-1, 1, 1, 1)
+            zero_point = zero_point.view(-1, 1, 1, 1)
+        # reshape scale and zeropoint for linear weights
+        elif len(input.shape) == 2:
+            scale      = scale.view(-1, 1)
+            zero_point = zero_point.view(-1, 1)
+        # mapping single-precision input to integer values with the given scale and zeropoint
+        if inplace:
+            input.mul_(scale).sub_(zero_point).round_()
+            return input
+        return torch.round(scale * input - zero_point)
+
+    def backward(self, grad_output):
+        return self.scale * grad_output.clone(), None, None, None
+
+
+
+
+def plot_quant_float(input_x, quant_x):
+    input_x = input_x.cpu().detach().numpy()
+    quant_x = quant_x.cpu().detach().numpy()
+    #fig = plt.figure()
+    fig, ax = plt.subplots()
+    ax.plot(input_x, quant_x, marker='+', color='b')
+    ax.set_xlabel('floating point')
+    ax.set_ylabel('quantized integer')
+    ax.axhline(y=0, color='k')
+    ax.axvline(x=0, color='k')
+    ax.grid(True)
+    fig.savefig('/home/jovyan/new-quant-static-vol-3/plots/plot_linear.png')
+    #plt.show()
+
+def plot_quant_float_conv(input_x, quant_x):
+  print('plot_quant_float_conv')
+  input_x = input_x.cpu().detach().numpy()
+  quant_x = quant_x.cpu().detach().numpy()
+  in_channel,out_channel, h, w = input_x.shape
+  in_, out_, h_, w_ = quant_x.shape
+  fig = plt.figure()
+  x = input_x.reshape(out_channel*h, in_channel*w)
+  quant_x_ = quant_x.reshape(out_*h_, in_* w_)
+  #print(x.shape)
+  fig, ax = plt.subplots()
+  ax.plot(x, quant_x_, marker='+', color='b')
+  ax.set_xlabel('floating point')
+  ax.set_ylabel('quantized integer')
+  ax.axhline(y=0, color='k')
+  ax.axvline(x=0, color='k')
+  ax.grid(True)
+  fig.savefig('/home/jovyan/new-quant-static-vol-3/plots/plot_conv_{}.png'.format(input_x.shape))
+    
+    
+
+def plot_quantization_loss_linear(input_x, dequant_x):
+    input_x = input_x.cpu().detach().numpy()
+    #print('input', input_x.shape)
+    dequant_x = dequant_x.cpu().detach().numpy()
+    #print('dequant',dequant_x.shape)
+    error = np.reshape(input_x - dequant_x, (-1) )
+    #print('error',error.shape)
+    #print("error", np.min(error), np.max(error))
+    fig = plt.figure()
+    fig, ax = plt.subplots()
+    ax.scatter(input_x, error)
+    ax.set_ylim([1.2*min(error), 1.2*max(error)])
+    ax.set_xlabel("real value")
+    ax.set_ylabel("quantization error")
+    fig.savefig('/home/jovyan/new-quant-static-vol-3/plots/quant_error.png')
+
+
+def plot_quantization_loss_conv(input_x, dequant_x):
+    input_x = input_x.cpu().detach().numpy()
+    #print('input', input_x.shape)
+    dequant_x = dequant_x.cpu().detach().numpy()
+    #print('dequant',dequant_x.shape)
+    error = np.reshape(input_x - dequant_x, (-1) )
+    #print('error',error.shape)
+    #print("error", np.min(error), np.max(error))
+    fig = plt.figure()
+    fig, ax = plt.subplots()
+    ax.scatter(input_x, error)
+    ax.set_ylim([1.2*min(error), 1.2*max(error)])
+    ax.set_xlabel("real value")
+    ax.set_ylabel("quantization error")
+    fig.savefig('/home/jovyan/new-quant-static-vol-3/plots/quant_error_conv_{}.png'.format(input_x.shape))
