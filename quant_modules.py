@@ -174,7 +174,7 @@ class QuantAct_Int(Module):
     def __init__(self,
                  activation_bit,
                  full_precision_flag=False,
-                 running_stat=False,
+                 running_stat=True,
                  integer_only=True):
         """
         activation_bit: bit-setting for activation
@@ -188,6 +188,7 @@ class QuantAct_Int(Module):
         self.running_stat = running_stat
         self.register_buffer('x_min', torch.zeros(1))
         self.register_buffer('x_max', torch.zeros(1))
+        self.act_function = AsymmetricQuantFunction_Int.apply
 
     def __repr__(self):
         return "{0}(activation_bit={1}, full_precision_flag={2}, running_stat={3}, Act_min: {4:.2f}, Act_max: {5:.2f})".format(
@@ -205,6 +206,9 @@ class QuantAct_Int(Module):
         """
         quantize given activation x
         """
+        if self.full_precision_flag:
+            return x
+
         if self.running_stat:
             x_min = x.data.min()
             x_max = x.data.max()
@@ -212,14 +216,10 @@ class QuantAct_Int(Module):
             self.x_min += -self.x_min + min(self.x_min, x_min)
             self.x_max += -self.x_max + max(self.x_max, x_max)
 
-        if self.full_precision_flag:
-            return x
-        else:
-            return x, self.activation_bit, self.x_min, self.x_max
-        
-            
-
-
+        quant_act = self.act_function(x, self.activation_bit, self.x_min,
+                                      self.x_max)
+        return quant_act
+                  
 class Quant_Linear_Int(Module):
     """
     Class to quantize given linear layer weights
