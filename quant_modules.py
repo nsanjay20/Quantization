@@ -17,6 +17,7 @@ from quant_utils import *
 import sys
 
 
+
 class QuantAct(Module):
     """
     Class to quantize given activations
@@ -24,15 +25,14 @@ class QuantAct(Module):
     def __init__(self,
                  activation_bit,
                  full_precision_flag=False,
-                 running_stat=True,
-                 integer_only=True):
+                 running_stat=True):
         """
         activation_bit: bit-setting for activation
         full_precision_flag: full precision or not
         running_stat: determines whether the activation range is updated or froze
         """
         super(QuantAct, self).__init__()
-        self.activation_bit = activation_bit
+        self.bit = activation_bit
         self.full_precision_flag = full_precision_flag
         self.running_stat = running_stat
         self.register_buffer('x_min', torch.zeros(1))
@@ -41,7 +41,7 @@ class QuantAct(Module):
 
     def __repr__(self):
         return "{0}(activation_bit={1}, full_precision_flag={2}, running_stat={3}, Act_min: {4:.2f}, Act_max: {5:.2f})".format(
-            self.__class__.__name__, self.activation_bit,
+            self.__class__.__name__, self.bit,
             self.full_precision_flag, self.running_stat, self.x_min.item(),
             self.x_max.item())
 
@@ -58,6 +58,8 @@ class QuantAct(Module):
         """
         quantize given activation x
         """
+        if self.full_precision_flag:
+            return x
         if self.running_stat:
             x_min = x.data.min()
             x_max = x.data.max()
@@ -65,12 +67,10 @@ class QuantAct(Module):
             self.x_min += -self.x_min + min(self.x_min, x_min)
             self.x_max += -self.x_max + max(self.x_max, x_max)
 
-        if self.full_precision_flag:
-            return x
-        else:
-            quant_act = self.act_function(x, self.activation_bit, self.x_min,
-                                          self.x_max)
-            return quant_act
+        quant_act = self.act_function(x, self.bit, self.x_min,
+                                      self.x_max)
+        return quant_act
+
 
 
 class Quant_Linear(Module):
@@ -85,13 +85,13 @@ class Quant_Linear(Module):
         """
         super(Quant_Linear, self).__init__()
         self.full_precision_flag = full_precision_flag
-        self.weight_bit = weight_bit
+        self.bit = weight_bit
         self.weight_function = AsymmetricQuantFunction.apply
 
     def __repr__(self):
         s = super(Quant_Linear, self).__repr__()
         s = "(" + s + " weight_bit={}, full_precision_flag={})".format(
-            self.weight_bit, self.full_precision_flag)
+            self.bit, self.full_precision_flag)
         return s
 
     def set_param(self, linear):
@@ -108,15 +108,15 @@ class Quant_Linear(Module):
         using quantized weights to forward activation x
         """
         w = self.weight
+        if self.full_precision_flag:
+            return F.linear(x, weight=w, bias=self.bias)
         x_transform = w.data.detach()
         w_min = x_transform.min(dim=1).values
         w_max = x_transform.max(dim=1).values
-        if self.full_precision_flag:
-            w = self.weight
-        else:
-            w = self.weight_function(self.weight, self.weight_bit, w_min, w_max)
-        
+        w = self.weight_function(self.weight, self.bit, w_min,
+                                     w_max)
         return F.linear(x, weight=w, bias=self.bias)
+        
 
 
 class Quant_Conv2d(Module):
@@ -126,13 +126,13 @@ class Quant_Conv2d(Module):
     def __init__(self, weight_bit, full_precision_flag=False):
         super(Quant_Conv2d, self).__init__()
         self.full_precision_flag = full_precision_flag
-        self.weight_bit = weight_bit
+        self.bit = weight_bit
         self.weight_function = AsymmetricQuantFunction.apply
 
     def __repr__(self):
         s = super(Quant_Conv2d, self).__repr__()
         s = "(" + s + " weight_bit={}, full_precision_flag={})".format(
-            self.weight_bit, self.full_precision_flag)
+            self.bit, self.full_precision_flag)
         return s
 
     def set_param(self, conv):
@@ -154,18 +154,16 @@ class Quant_Conv2d(Module):
         using quantized weights to forward activation x
         """
         w = self.weight
+        if self.full_precision_flag:
+            return F.conv2d(x, w, self.bias, self.stride, self.padding,
+                            self.dilation, self.groups)
         x_transform = w.data.contiguous().view(self.out_channels, -1)
         w_min = x_transform.min(dim=1).values
         w_max = x_transform.max(dim=1).values
-        if self.full_precision_flag:
-            w = self.weight
-        else:
-            w = self.weight_function(self.weight, self.weight_bit, w_min,
-                                     w_max)   
-
+        w = self.weight_function(self.weight, self.bit, w_min,
+                                     w_max)
         return F.conv2d(x, w, self.bias, self.stride, self.padding,
                         self.dilation, self.groups)
-
 
 
 # Integer Only Implementation
@@ -270,6 +268,7 @@ class Quant_Linear_Int(Module):
             w = self.weight
             return F.linear(x, weight=w, bias=self.bias)
         else:
+            print('calculantion linear')
             # x is asymmetric quantization with range [0,255]
             # new_quant_x = linear_quantize(x, scale_x, torch.zeros(1).cuda())
             new_quant_x = self.quantfunc(x, scale_x, torch.zeros(1).cuda())
@@ -297,7 +296,7 @@ class Quant_Conv2d_Int(Module):
         super(Quant_Conv2d_Int, self).__init__()
         self.full_precision_flag = full_precision_flag
         self.weight_bit = weight_bit
-        self.weight_function = AsymmetricQuantFunction.apply
+        self.weight_function = AsymmetricQuantFunction_Int.apply
 
     def __repr__(self):
         s = super(Quant_Conv2d_Int, self).__repr__()

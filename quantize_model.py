@@ -28,10 +28,8 @@ class QuanModel():
         # quantize convolutional and linear layers to 8-bit
         if type(model) == nn.Conv2d:
             if integer_only:
-                print('integer_only')
                 quant_mod = Quant_Conv2d_Int(weight_bit=8)
             else:
-                print('not QAT')
                 quant_mod = Quant_Conv2d(weight_bit=8)
             quant_mod.set_param(model)
             self.quan_weight_layers.append(quant_mod)
@@ -53,9 +51,9 @@ class QuanModel():
             if integer_only:
                 return nn.Sequential(*[model, QuantAct(activation_bit=8)])
             else:
-                return nn.Sequential(*[model, QuantAct(activation_bit=8)])
-            self.quan_act_layers.append(quant_mod)
-            return nn.Sequential(*[model, quant_mod])
+                quant_mod = QuantAct(activation_bit=8)
+                self.quan_act_layers.append(quant_mod)
+                return nn.Sequential(*[model, quant_mod])
 
         # recursively use the quantized module to replace the single-precision module
         elif type(model) == nn.Sequential:

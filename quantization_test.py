@@ -55,8 +55,6 @@ def arg_parse():
                         type=int,
                         default=128,
                         help='batch size of test data')
-    parser.add_argument('--percentile', type=float, default=None,
-                        help='percentile for quantization')
     args = parser.parse_args()
     return args
 
@@ -96,9 +94,10 @@ def plot_sen(sen, arch):
     #    os.makedirs('workspace/images')
     #fig.write_image('workspace/images/{}_sen.png'.format(arch))
 
-def random_sample(sen_result, quan_weight, weight_num):
+def random_sample(sen_result, quan_weight, weight_num):         #quan_weight: no of quantized weight layers, weight_num: no of weight elements in each quantized layer
     bit_ = [2,4,8]
     random_code = [random.randint(0,2) for i in range(len(quan_weight))]
+    #print(random_code)
     sen = 0
     size = 0
     for i, bit in enumerate(random_code):
@@ -117,7 +116,7 @@ class Node:
         self.profit = profit
         self.bit = bit
     def __str__(self):
-        return 'cost: {:.2f} profit: {:.2f}'.format(self.cost, self.profit)
+        return 'cost: {:.2f} profit: {:.2f} bit: {:.2f}'.format(self.cost, self.profit,self.bit)
     def __repr__(self):
         return self.__str__()
     
@@ -128,6 +127,7 @@ def get_FrontierFrontier(sen_result, layer_num, weight_num, constraint=1000):
     prifits = []
     for line in sen_result:
         prifits.append([-i for i in line])
+    #print(sen_result)
     root = Node(cost=0, profit=0, parent=None)
     current_list = [root]
     for layer_id in range(layer_num):
@@ -236,6 +236,9 @@ if __name__ == '__main__':
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
 
+    cuda_device = torch.device("cuda:0")
+    cpu_device = torch.device("cpu:0")
+
     # Load pretrained model
     model = ptcv_get_model(args.model, pretrained=True)
     print('****** Baseline model loaded ******')
@@ -269,11 +272,15 @@ if __name__ == '__main__':
     # Freeze BatchNorm statistics
     quantized_model.eval()
     quantized_model = quantized_model.cuda()
+    #freeze_model(quantized_model)
+    #quantized_model = nn.DataParallel(quantized_model).cuda()
     #test(quantized_model, test_loader)
+    #print(quantized_model)
     node_list = sensitivity_anylysis(quan_tool.quan_act_layers, quan_tool.quan_weight_layers, dataloader, quantized_model, args, quan_tool.weight_num)
     config = {
-        'resnet18': [(8, 8)], # representing MP6 for weights and 6bit for activation
+        'resnet18': [(8, 8),(6,6),(4, 8), (4,4)], # representing MP6 for weights and 6bit for activation
         'resnet50': [(4,4)],
+        'resnet20_cifar10':[(8, 8),(6,6),(4, 8), (4,4)],
         'mobilenetv2_w1': [(8, 8),(6,6),(4, 8), (4,4)],
         'shufflenet_g1_w1': [(4,4)],
         'inceptionv3': [(8, 8),(6,6),(4, 8), (4,4)],
@@ -317,12 +324,12 @@ if __name__ == '__main__':
         # Freeze activation range during test
         freeze_model(quantized_model)
         quantized_model = nn.DataParallel(quantized_model).cuda()
+        #print(quantized_model)
 
         # Test the final quantized model
         print('size: {:.2f} MB Wmp{}A{}'.format(constraint, bit_w, bit_a))
         test(quantized_model, test_loader)
-        cuda_device = torch.device("cuda:0")
-        cpu_device = torch.device("cpu:0")
+        
         
         
         
