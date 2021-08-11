@@ -238,7 +238,7 @@ if __name__ == '__main__':
 
     cuda_device = torch.device("cuda:0")
     cpu_device = torch.device("cpu:0")
-
+    dataset = args.dataset
     # Load pretrained model
     model = ptcv_get_model(args.model, pretrained=True)
     print('****** Baseline model loaded ******')
@@ -272,16 +272,43 @@ if __name__ == '__main__':
     # Freeze BatchNorm statistics
     quantized_model.eval()
     quantized_model = quantized_model.cuda()
-    #freeze_model(quantized_model)
-    #quantized_model = nn.DataParallel(quantized_model).cuda()
-    #test(quantized_model, test_loader)
+    update(quantized_model, dataloader)
+    freeze_model(quantized_model)
+    quantized_model = nn.DataParallel(quantized_model).cuda()
+    test(quantized_model, test_loader)
     #print(quantized_model)
-    node_list = sensitivity_anylysis(quan_tool.quan_act_layers, quan_tool.quan_weight_layers, dataloader, quantized_model, args, quan_tool.weight_num)
+    model_dir = "/home/jovyan/Quantization/model/cifar10/"
+    #model_filename = "resnet20_cifar10.pt"
+    quantized_model_filename = "resnet20_quantized_cifar10.pt"
+    #model_filepath = os.path.join(model_dir, model_filename)
+    quantized_model_filepath = os.path.join(model_dir,
+                                            quantized_model_filename)
+    save_torchscript_model(model=quantized_model,
+                           model_dir=model_dir,
+                           model_filename=quantized_model_filename,
+                           device=cuda_device)
+    # Load quantized model.
+    quantized_jit_model = load_torchscript_model(
+        model_filepath=quantized_model_filepath, device = cuda_device)
+    
+    #test inference latency
+    fp32_gpu_inference_latency = measure_inference_latency(model=model, dataset=dataset, num_samples=100, for_inception=False)
+
+    int8_gpu_inference_latency = measure_inference_latency(model=quantized_model, dataset=dataset, num_samples=100, for_inception=False)
+
+    
+    print("FP32 CUDA Inference Latency: {:.2f} ms / sample".format(
+    fp32_gpu_inference_latency * 1000))
+    print("INT8 CUDA Inference Latency: {:.2f} ms / sample".format(
+    int8_gpu_inference_latency * 1000))
+
+
+    '''node_list = sensitivity_anylysis(quan_tool.quan_act_layers, quan_tool.quan_weight_layers, dataloader, quantized_model, args, quan_tool.weight_num)
     config = {
         'resnet18': [(8, 8),(6,6),(4, 8), (4,4)], # representing MP6 for weights and 6bit for activation
-        'resnet50': [(4,4)],
-        'resnet20_cifar10':[(8, 8),(6,6),(4, 8), (4,4)],
-        'mobilenetv2_w1': [(8, 8),(6,6),(4, 8), (4,4)],
+        'resnet50': [(6,6)],
+        'resnet20_cifar10':[(4,4)],
+        'mobilenetv2_w1': [(4,4)],
         'shufflenet_g1_w1': [(4,4)],
         'inceptionv3': [(8, 8),(6,6),(4, 8), (4,4)],
         'sqnxt23_w2': [(8, 8),(6,6),(4, 8), (4,4)]
@@ -303,10 +330,7 @@ if __name__ == '__main__':
         #print('node', node)
         while(node is not None):
             bits.append(node.bit)
-            #print(bits)
-            #print(len(bits))
             node = node.parent
-            #print('node---->',node)
         bits.reverse() #remove None
         bits = bits[1:] #remove None from list
         #plot_bits(bits, '{}_MP{}A{}'.format(args.model, bit_w, bit_a))
@@ -324,51 +348,11 @@ if __name__ == '__main__':
         # Freeze activation range during test
         freeze_model(quantized_model)
         quantized_model = nn.DataParallel(quantized_model).cuda()
-        #print(quantized_model)
 
         # Test the final quantized model
         print('size: {:.2f} MB Wmp{}A{}'.format(constraint, bit_w, bit_a))
-        test(quantized_model, test_loader)
+        test(quantized_model, test_loader)'''
         
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        #test inference latency
-        #fp32_gpu_inference_latency = measure_inference_latency(model=model,
-        # device=cuda_device,
-        # input_size=(1, 3, 224, 224),
-        # num_samples=100)
-
-        #int8_gpu_inference_latency = measure_inference_latency(model=quantized_model,
-        # device=cuda_device,
-        # input_size=(1, 3, 224, 224),
-        # num_samples=100)
-
-        #print("FP32 CPU Inference Latency: {:.2f} ms / sample".format(
-        #fp32_cpu_inference_latency * 1000))
-        #print("FP32 CUDA Inference Latency: {:.2f} ms / sample".format(
-        #fp32_gpu_inference_latency * 1000))
-        #print("INT8 CUDA Inference Latency: {:.2f} ms / sample".format(
-        #int8_gpu_inference_latency * 1000))
          #print("INT8 JIT CPU Inference Latency: {:.2f} ms / sample".format(
         #int8_jit_cpu_inference_latency * 1000))
 

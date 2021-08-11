@@ -18,6 +18,10 @@ from quantize_model import *
 import os
 import sys
 os.environ["CUDA_VISIBLE_DEVICES"]="0,1,2,3"
+import gc
+gc.collect()
+torch.cuda.empty_cache()
+
 
 # model settings
 def arg_parse():
@@ -125,8 +129,6 @@ if __name__ == '__main__':
 
     quan_tool = QuanModel()
     quantized_model = quan_tool.quantize_model(model, integer_only=True)
-
-    #quantized_model = quantize_model(model, integer_only=True)
     quantized_model = nn.DataParallel(quantized_model).cuda()
     quantized_model.train()
 
@@ -141,8 +143,9 @@ if __name__ == '__main__':
         print(f"Epoch {epoch}: loss = {loss:4f}, top1_accuracy = {acc*100:4f}, learning_rate = {args.scheduler.get_last_lr()[0]}")
         if (epoch+1) % args.eval_interval == 0:
             acc = test(quantized_model, test_loader)
-
+            
             if acc > best_acc:
+                print('acc:{}, best_acc:{}'.format(acc,best_acc))
                 best_acc = acc
                 save_path = os.path.join(args.dataset, args.save)
                 #print(save_path)
