@@ -199,6 +199,89 @@ def measure_throughput(model, dataset, for_inception=False):
 
 
 
+def evaluate_model(model, test_loader, device, criterion=None):
+    #evaluate quantized model
+    model.eval()
+    model.to(device)
+
+    running_loss = 0
+    running_corrects = 0
+
+    for inputs, labels in test_loader:
+
+        inputs = inputs.to(device)
+        labels = labels.to(device)
+
+        outputs = model(inputs)
+        _, preds = torch.max(outputs, 1)
+
+        if criterion is not None:
+            loss = criterion(outputs, labels).item()
+        else:
+            loss = 0
+
+        # statistics
+        running_loss += loss * inputs.size(0)
+        running_corrects += torch.sum(preds == labels.data)
+
+    eval_loss = running_loss / len(test_loader.dataset)
+    eval_accuracy = running_corrects / len(test_loader.dataset)
+    return eval_loss, eval_accuracy
+
+def train_model(model, train_loader, test_loader, device, args, num_epochs=200):
+    # The training configurations were not carefully selected.
+    loss_function = args.loss_function
+    optimizer     = args.optimizer
+    scheduler     = args.scheduler
+
+    model.to(device)
+
+    for epoch in range(num_epochs):
+        # Training
+        model.train()
+
+        running_loss = 0
+        running_corrects = 0
+
+        for inputs, labels in train_loader:
+
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+
+            # forward 
+            outputs = model(inputs)
+            loss = loss_function(outputs, labels)
+            _, preds = torch.max(outputs, 1)
+            
+            #backward + optimize
+            # zero the parameter gradients
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # statistics
+            running_loss += loss.item() * inputs.size(0)
+            running_corrects += torch.sum(preds == labels.data)
+
+        train_loss = running_loss / len(train_loader.dataset)
+        train_accuracy = running_corrects / len(train_loader.dataset)
+
+        # Evaluation
+        model.eval()
+        eval_loss, eval_accuracy = evaluate_model(model=model,
+                                                    test_loader=test_loader,
+                                                    device=device,
+                                                    criterion=loss_function)
+
+        # Set learning rate scheduler
+        scheduler.step()
+
+        print(
+            "Epoch: {:03d} Train Loss: {:.3f} Train Acc: {:.3f} Eval Loss: {:.3f} Eval Acc: {:.3f}"
+            .format(epoch + 1, train_loss, train_accuracy, eval_loss,
+                    eval_accuracy))
+
+    return model
 
 
 

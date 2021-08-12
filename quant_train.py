@@ -92,6 +92,11 @@ if __name__ == '__main__':
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
 
+    cuda_device = torch.device("cuda:0")
+    cpu_device = torch.device("cpu:0")
+    dataset = args.dataset
+    model_name = args.model
+
     # Load pretrained model
     model = ptcv_get_model(args.model, pretrained=True).cuda()
     print('****** Full precision model loaded ******')
@@ -137,6 +142,23 @@ if __name__ == '__main__':
         acc = test(model, test_loader)
         print('FP model accuracy', acc)
 
+    # # Use training data for calibration.
+    print("Training QAT Model...")
+    '''quantized_model.train()
+    train_model(model=quantized_model,
+                train_loader=train_loader,
+                test_loader=test_loader,
+                device=cuda_device,
+                args=args,
+                num_epochs=10)
+    quantized_model.to(cuda_device)
+
+    quantized_model.eval()
+
+    # Print quantized model.'''
+    #print(quantized_model)
+
+
     for epoch in range(args.epochs):
         print('epoch no', epoch)
         acc, loss = train(quantized_model, train_loader, args, test_loader)
@@ -147,11 +169,52 @@ if __name__ == '__main__':
             if acc > best_acc:
                 print('acc:{}, best_acc:{}'.format(acc,best_acc))
                 best_acc = acc
-                save_path = os.path.join(args.dataset, args.save)
+                '''save_path = os.path.join(args.dataset, args.save)
                 #print(save_path)
                 if not os.path.exists(save_path):
                     os.makedirs(save_path)
                 filename = os.path.join( save_path, "bestmodel.pth.tar")
-                torch.save({'state_dict': model.state_dict(),}, filename)
+                torch.save({'state_dict': model.state_dict(),}, filename)'''
+                "-----------save and perform inference---------------------------------"    
+                model_dir = "/home/jovyan/new-quant-static-vol-1/model/{}/".format(dataset)
+                quantized_model_filename = "{}_quantized_{}.pt".format(model_name, dataset)
+                quantized_model_filepath = os.path.join(model_dir, quantized_model_filename)
 
+                # Save model.
+                save_model(model=quantized_model,
+                        model_dir=model_dir, 
+                        model_filename=quantized_model_filename)
+
+    # Load a pretrained model.
+    model = load_model(model=quantized_model,
+                       model_filepath=quantized_model_filepath,
+                       device=cuda_device)
+
+    _, fp32_eval_accuracy = evaluate_model(model=model,
+                                           test_loader=test_loader,
+                                           device=cuda_device,
+                                           criterion=None)
+    _, int8_eval_accuracy = evaluate_model(model=quantized_model,
+                                           test_loader=test_loader,
+                                           device=cuda_device,
+                                           criterion=None)
+
+    print("FP32 evaluation accuracy: {:.3f}".format(fp32_eval_accuracy))
+    print("INT8 evaluation accuracy: {:.3f}".format(int8_eval_accuracy))
+
+
+    #test inference latency
+    fp32_gpu_inference_latency = measure_inference_latency(model=model, dataset=dataset, num_samples=100, for_inception=False)
+    fp32_inference_throughput = measure_throughput(model, dataset, for_inception=False)
+    int8_gpu_inference_latency = measure_inference_latency(model=quantized_model, dataset=dataset, num_samples=100, for_inception=False)
+    int8_gpu_inference_throughput = measure_throughput(quantized_model, dataset, for_inception=False)
+    
+    print("FP32 CUDA Inference Latency: {:.2f} ms / sample".format(
+    fp32_gpu_inference_latency * 1000))
+    print("FP32 CUDA Inference Throughput: {:.2f} FPS / sample".format(fp32_inference_throughput))
+    print("INT8 CUDA Inference Latency: {:.2f} ms / sample".format(
+    int8_gpu_inference_latency * 1000))
+    print("Int8 CUDA Inference Throughput: {:.2f} FPS / sample".format(int8_gpu_inference_throughput))
+
+    
 
