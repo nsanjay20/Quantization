@@ -9,9 +9,9 @@ import argparse
 import random
 import time
 import numpy as np
-#import plotly
-#import plotly.graph_objects as go
-#import plotly.io as pio
+import plotly
+import plotly.graph_objects as go
+import plotly.io as pio
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -79,20 +79,20 @@ def plot_sen(sen, arch):
         name = '8bit'   )
     data = [trace0, trace1, trace2]
 
-    #layout = go.Layout(
-    #    title='{}'.format(arch),
-    #    xaxis=dict(
-    #        title='{} layer id'.format(arch),
-    #    ),
-    #    yaxis=dict(
-    #        title='sensitivity of quantization',
-    #        type='log'
-    #    )
-    #)
-    #fig = go.Figure(data, layout)
-    #if not os.path.exists('workspace/images'):
-    #    os.makedirs('workspace/images')
-    #fig.write_image('workspace/images/{}_sen.png'.format(arch))
+    layout = go.Layout(
+        title='{}'.format(arch),
+        xaxis=dict(
+            title='{} layer id'.format(arch),
+        ),
+        yaxis=dict(
+            title='sensitivity of quantization',
+            type='log'
+        )
+    )
+    fig = go.Figure(data, layout)
+    if not os.path.exists('workspace/images'):
+        os.makedirs('workspace/images')
+    fig.write_image('workspace/images/{}_sen.png'.format(arch))
 
 def random_sample(sen_result, quan_weight, weight_num):         #quan_weight: no of quantized weight layers, weight_num: no of weight elements in each quantized layer
     bit_ = [2,4,8]
@@ -185,7 +185,7 @@ def sensitivity_anylysis(quan_act, quan_weight, dataloader, quantized_model, arg
             sen_result[j][i] = kl_div.item()
             quan_weight[i].full_precision_flag = True
     #print(sen_result)
-    #plot_sen(sen_result, args.model)
+    plot_sen(sen_result, args.model)
     # 3. Pareto Frontier
     ## random
     sizes = []
@@ -194,40 +194,40 @@ def sensitivity_anylysis(quan_act, quan_weight, dataloader, quantized_model, arg
         size, sen = random_sample(sen_result, quan_weight, weight_num)
         sizes.append(size)
         sens.append(sen)
-    #trace_random = go.Scatter(x=sizes, y=sens, mode='markers', name='random')
-    #layout = go.Layout(
-    #    title='{}'.format(args.model),
-    #    xaxis=dict(
-    #        title='{} size (MB)'.format(args.model),
-    #    ),
-    #    yaxis=dict(
-    #        title='sensitivity',
-    #        type='log'
-    #    )
-    #)
+    trace_random = go.Scatter(x=sizes, y=sens, mode='markers', name='random')
+    layout = go.Layout(
+        title='{}'.format(args.model),
+        xaxis=dict(
+            title='{} size (MB)'.format(args.model),
+        ),
+        yaxis=dict(
+            title='sensitivity',
+            type='log'
+        )
+    )
     begin = time.time()
     ## DP
     node_list = get_FrontierFrontier(sen_result, len(quan_weight), weight_num)
     print('dp cost: {:.2f}s'.format(time.time() - begin))
     sizes = [x.cost for x in node_list]
     sens = [ -x.profit for x in node_list]
-    #trace = go.Scatter(x=sizes, y=sens, mode='markers+lines', name='Frontier Frontier', marker={"size": 3})
-    #data = [trace, trace_random]
-    #fig = go.Figure(data, layout)
-    #fig.write_image('workspace/images/{}_Pareto.png'.format(args.model))
-    #fig.write_image('workspace/images/{}_Pareto.pdf'.format(args.model))
+    trace = go.Scatter(x=sizes, y=sens, mode='markers+lines', name='Frontier Frontier', marker={"size": 3})
+    data = [trace, trace_random]
+    fig = go.Figure(data, layout)
+    fig.write_image('workspace/images/{}_Pareto.png'.format(args.model))
+    fig.write_image('workspace/images/{}_Pareto.pdf'.format(args.model))
     return node_list
 
-#def plot_bits(bits, name):
-#    trace = go.Scatter(y=bits, mode='markers+lines')
-#    layout = go.Layout(
-#        title=name,
-#        xaxis=dict(title='size (MB)'),
-#        yaxis=dict(title='bits of weight'))
-#    data = [trace]
-#    fig = go.Figure(data, layout)
-#    fig.write_image('workspace/images/{}_bit.png'.format(name))
-#    fig.write_image('workspace/images/{}_bit.pdf'.format(name))
+def plot_bits(bits, name):
+    trace = go.Scatter(y=bits, mode='markers+lines')
+    layout = go.Layout(
+        title=name,
+        xaxis=dict(title='size (MB)'),
+        yaxis=dict(title='bits of weight'))
+    data = [trace]
+    fig = go.Figure(data, layout)
+    fig.write_image('workspace/images/{}_bit.png'.format(name))
+    fig.write_image('workspace/images/{}_bit.pdf'.format(name))
     
 
 
@@ -246,7 +246,7 @@ if __name__ == '__main__':
     # Load validation data
     test_loader = getTestData(args.dataset,
                               batch_size=args.test_batch_size,
-                              path='/home/jovyan/new-quant-static-vol-1/',
+                              path='/content/Quantization/data/imagenet/',
                               for_inception=args.model.startswith('inception'))
     begin = time.time()
     # Load training data
@@ -254,7 +254,7 @@ if __name__ == '__main__':
         print('Get train data')
         dataloader = getTrainData(args.dataset,
                                   batch_size=args.batch_size,
-                                  path='/home/jovyan/new-quant-static-vol-1/',
+                                  path='/content/Quantization/data/imagenet/',
                                   for_inception=args.model.startswith('inception'))
 
     if args.data_source == 'random':
@@ -272,40 +272,18 @@ if __name__ == '__main__':
     # Freeze BatchNorm statistics
     quantized_model.eval()
     quantized_model = quantized_model.cuda()
-    update(quantized_model, dataloader)
+    "---------- Fixed precision---------------------------"
+    '''update(quantized_model, dataloader)
     freeze_model(quantized_model)
     quantized_model = nn.DataParallel(quantized_model).cuda()
     test(quantized_model, test_loader)
-    #print(quantized_model)
-    model_dir = "/home/jovyan/Quantization/model/cifar10/"
-    #model_filename = "resnet20_cifar10.pt"
-    quantized_model_filename = "resnet20_quantized_cifar10.pt"
-    #model_filepath = os.path.join(model_dir, model_filename)
-    quantized_model_filepath = os.path.join(model_dir,
-                                            quantized_model_filename)
-    save_torchscript_model(model=quantized_model,
-                           model_dir=model_dir,
-                           model_filename=quantized_model_filename,
-                           device=cuda_device)
-    # Load quantized model.
-    quantized_jit_model = load_torchscript_model(
-        model_filepath=quantized_model_filepath, device = cuda_device)
-    
-    #test inference latency
-    fp32_gpu_inference_latency = measure_inference_latency(model=model, dataset=dataset, num_samples=100, for_inception=False)
+    #print(quantized_model)'''
+    "------------------------------------------------------"
+    "------------------Mixed Precison----------------------"
 
-    int8_gpu_inference_latency = measure_inference_latency(model=quantized_model, dataset=dataset, num_samples=100, for_inception=False)
-
-    
-    print("FP32 CUDA Inference Latency: {:.2f} ms / sample".format(
-    fp32_gpu_inference_latency * 1000))
-    print("INT8 CUDA Inference Latency: {:.2f} ms / sample".format(
-    int8_gpu_inference_latency * 1000))
-
-
-    '''node_list = sensitivity_anylysis(quan_tool.quan_act_layers, quan_tool.quan_weight_layers, dataloader, quantized_model, args, quan_tool.weight_num)
+    node_list = sensitivity_anylysis(quan_tool.quan_act_layers, quan_tool.quan_weight_layers, dataloader, quantized_model, args, quan_tool.weight_num)
     config = {
-        'resnet18': [(8, 8),(6,6),(4, 8), (4,4)], # representing MP6 for weights and 6bit for activation
+        'resnet18': [(6,6)], # representing MP6 for weights and 6bit for activation
         'resnet50': [(6,6)],
         'resnet20_cifar10':[(4,4)],
         'mobilenetv2_w1': [(4,4)],
@@ -351,10 +329,44 @@ if __name__ == '__main__':
 
         # Test the final quantized model
         print('size: {:.2f} MB Wmp{}A{}'.format(constraint, bit_w, bit_a))
-        test(quantized_model, test_loader)'''
-        
-         #print("INT8 JIT CPU Inference Latency: {:.2f} ms / sample".format(
-        #int8_jit_cpu_inference_latency * 1000))
+        #test(quantized_model, test_loader)
+    "-----------------------------------------------------------------"
+
+    "-----------save and perform inference---------------------------------"    
+    model_dir = "/content/Quantization/data/model/imagenet/"
+    #model_filename = "resnet20_cifar10.pt"
+    quantized_model_filename = "resnet18_quantized_imagenet.pt"
+    #model_filepath = os.path.join(model_dir, model_filename)
+    quantized_model_filepath = os.path.join(model_dir,
+                                            quantized_model_filename)
+
+    # Save model.
+    save_model(model=quantized_model,
+               model_dir=model_dir, 
+               model_filename=quantized_model_filename)
+    # Load a pretrained model.
+    model = load_model(model=quantized_model,
+                       model_filepath=quantized_model_filepath,
+                       device=cuda_device)
+    #save_torchscript_model(model=quantized_model,model_dir=model_dir,model_filename=quantized_model_filename,device=cuda_device)
+    # Load quantized model.
+    #quantized_jit_model = load_torchscript_model(
+    #    model_filepath=quantized_model_filepath, device = cuda_device)
+    
+    #test inference latency
+    fp32_gpu_inference_latency = measure_inference_latency(model=model, dataset=dataset, num_samples=100, for_inception=False)
+    fp32_inference_throughput = measure_throughput(model, dataset, for_inception=False)
+    int8_gpu_inference_latency = measure_inference_latency(model=quantized_model, dataset=dataset, num_samples=100, for_inception=False)
+    int8_gpu_inference_throughput = measure_throughput(quantized_model, dataset, for_inception=False)
+    
+    print("FP32 CUDA Inference Latency: {:.2f} ms / sample".format(
+    fp32_gpu_inference_latency * 1000))
+    print("FP32 CUDA Inference Throughput: {:.2f} FPS / sample".format(fp32_inference_throughput))
+    print("INT8 CUDA Inference Latency: {:.2f} ms / sample".format(
+    int8_gpu_inference_latency * 1000))
+    print("Int8 CUDA Inference Throughput: {:.2f} FPS / sample".format(int8_gpu_inference_throughput))
+    
+    
 
         
         
