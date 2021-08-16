@@ -15,6 +15,7 @@ import torch.nn.functional as F
 from torch.nn import Module, Parameter
 from quant_utils import *
 import sys
+import matplotlib.pyplot as plt
 
 
 
@@ -149,10 +150,12 @@ class Quant_Conv2d(Module):
         except AttributeError:
             self.bias = None
 
-    def forward(self, x):
+    def forward(self, x, vis=False, axs=None):
         """
         using quantized weights to forward activation x
         """
+        X = 0
+        y = 0
         w = self.weight
         if self.full_precision_flag:
             return F.conv2d(x, w, self.bias, self.stride, self.padding,
@@ -164,7 +167,7 @@ class Quant_Conv2d(Module):
                                      w_max)
         return F.conv2d(x, w, self.bias, self.stride, self.padding,
                         self.dilation, self.groups)
-
+        
 
 # Integer Only Implementation
 class QuantAct_Int(Module):
@@ -268,7 +271,7 @@ class Quant_Linear_Int(Module):
             w = self.weight
             return F.linear(x, weight=w, bias=self.bias)
         else:
-            print('calculantion linear')
+            #print('calculantion linear')
             # x is asymmetric quantization with range [0,255]
             # new_quant_x = linear_quantize(x, scale_x, torch.zeros(1).cuda())
             new_quant_x = self.quantfunc(x, scale_x, torch.zeros(1).cuda())
@@ -282,6 +285,7 @@ class Quant_Linear_Int(Module):
             # TODO bias quantization
             # print(x.shape, new_quant_x.shape, new_quant_w.shape, new_quant_b.shape)
             mult_res = F.linear(new_quant_x, weight=new_quant_w, bias=new_quant_b)
+            #('multiply result',mult_res)
 
             res = mult_res + zero_point_w * new_quant_x.sum(-1).unsqueeze(-1).expand_as(mult_res)
 

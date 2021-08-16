@@ -11,6 +11,8 @@ import torch.nn as nn
 from progress.bar import Bar
 import random
 import time
+import torchvision.models as models
+from torch.profile
 
 
 class CrossEntropyLabelSmooth(nn.Module):
@@ -172,21 +174,23 @@ def measure_throughput(model, dataset, for_inception=False):
   cuda_device = torch.device("cuda:0")
   device = torch.device(cuda_device)
   model.to(device)
-
+  #optimal_batch_size=2048
+  optimal_batch_size=512
   if dataset == 'cifar10':
-        input_size = (1, 3, 32, 32)
+      dummy_input = torch.randn(optimal_batch_size, 3, 32, 32, dtype=torch.float).to(device)
   elif dataset == 'imagenet':
         if not for_inception:
-            input_size = (1, 3, 224, 224)
+            dummy_input = torch.randn(optimal_batch_size, 3, 224, 224, dtype=torch.float).to(device)
         else:
-            input_size = (1, 3, 299, 299)
-  optimal_batch_size=512
-  dummy_input = torch.randn(optimal_batch_size, 3,224,224, dtype=torch.float).to(device)
+            dummy_input = torch.randn(optimal_batch_size, 3, 299, 299, dtype=torch.float).to(device)
+
+  #dummy_input = torch.randn(optimal_batch_size, 3, 32, 32, dtype=torch.float).to(device)
+  #print(dummy_input.shape)
   repetitions=100
   total_time = 0
   with torch.no_grad():
     for rep in range(repetitions):
-      starter, ender = torch.cuda.Event(enable_timing=True),          torch.cuda.Event(enable_timing=True)
+      starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
       starter.record()
       _ = model(dummy_input)
       ender.record()
@@ -209,8 +213,8 @@ def evaluate_model(model, test_loader, device, criterion=None):
 
     for inputs, labels in test_loader:
 
-        inputs = inputs.to(device)
-        labels = labels.to(device)
+        inputs = inputs.cuda()
+        labels = labels.cuda()
 
         outputs = model(inputs)
         _, preds = torch.max(outputs, 1)
@@ -223,9 +227,10 @@ def evaluate_model(model, test_loader, device, criterion=None):
         # statistics
         running_loss += loss * inputs.size(0)
         running_corrects += torch.sum(preds == labels.data)
+        #type(running_corrects)
 
-    eval_loss = running_loss / len(test_loader.dataset)
-    eval_accuracy = running_corrects / len(test_loader.dataset)
+    eval_loss = torch.true_divide(running_loss, len(test_loader.dataset))
+    eval_accuracy = torch.true_divide(running_corrects, len(test_loader.dataset))
     return eval_loss, eval_accuracy
 
 def train_model(model, train_loader, test_loader, device, args, num_epochs=200):
@@ -235,6 +240,7 @@ def train_model(model, train_loader, test_loader, device, args, num_epochs=200):
     scheduler     = args.scheduler
 
     model.to(device)
+    best_acc = 0
 
     for epoch in range(num_epochs):
         # Training
@@ -245,8 +251,8 @@ def train_model(model, train_loader, test_loader, device, args, num_epochs=200):
 
         for inputs, labels in train_loader:
 
-            inputs = inputs.to(device)
-            labels = labels.to(device)
+            inputs = inputs.cuda()
+            labels = labels.cuda()
 
             # forward 
             outputs = model(inputs)
@@ -262,9 +268,10 @@ def train_model(model, train_loader, test_loader, device, args, num_epochs=200):
             # statistics
             running_loss += loss.item() * inputs.size(0)
             running_corrects += torch.sum(preds == labels.data)
+            #print(type(len(train_loader.dataset)))
 
-        train_loss = running_loss / len(train_loader.dataset)
-        train_accuracy = running_corrects / len(train_loader.dataset)
+        train_loss = torch.true_divide(running_loss, len(train_loader.dataset))
+        train_accuracy = torch.true_divide(running_corrects, len(train_loader.dataset))
 
         # Evaluation
         model.eval()
@@ -272,7 +279,6 @@ def train_model(model, train_loader, test_loader, device, args, num_epochs=200):
                                                     test_loader=test_loader,
                                                     device=device,
                                                     criterion=loss_function)
-
         # Set learning rate scheduler
         scheduler.step()
 
@@ -280,11 +286,27 @@ def train_model(model, train_loader, test_loader, device, args, num_epochs=200):
             "Epoch: {:03d} Train Loss: {:.3f} Train Acc: {:.3f} Eval Loss: {:.3f} Eval Acc: {:.3f}"
             .format(epoch + 1, train_loss, train_accuracy, eval_loss,
                     eval_accuracy))
+        if eval_accuracy > best_acc:
+          best_acc = eval_accuracy
+          "-----------save model for inference ---------------------------------"    
+          model_dir = "/home/jovyan/new-quant-static-vol-1/model/cifar10/"
+          quantized_model_filename = "resnet20_cifar10_quantized_cifar10.pt"
+          quantized_model_filepath = os.path.join(model_dir, quantized_model_filename)
+
+          # Save model.
+          save_model(model=model, model_dir=model_dir, model_filename=quantized_model_filename)
 
     return model
 
+def profile_model(model, dataset):
+    model = model.cuda()
+    inputs = torch.randn(5, 3, 224, 224).cuda()
 
+    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
+        with record_function("model_inference"):
+            model(inputs)
 
+    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
 
 
 

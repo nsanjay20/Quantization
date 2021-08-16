@@ -21,6 +21,7 @@ os.environ["CUDA_VISIBLE_DEVICES"]="0,1,2,3"
 import gc
 gc.collect()
 torch.cuda.empty_cache()
+from torchsummary import summary
 
 
 # model settings
@@ -135,7 +136,7 @@ if __name__ == '__main__':
     quan_tool = QuanModel()
     quantized_model = quan_tool.quantize_model(model, integer_only=True)
     quantized_model = nn.DataParallel(quantized_model).cuda()
-    quantized_model.train()
+    
 
     best_acc = 0
     if args.init_test:
@@ -144,7 +145,7 @@ if __name__ == '__main__':
 
     # # Use training data for calibration.
     print("Training QAT Model...")
-    '''quantized_model.train()
+    quantized_model.train()
     train_model(model=quantized_model,
                 train_loader=train_loader,
                 test_loader=test_loader,
@@ -155,11 +156,11 @@ if __name__ == '__main__':
 
     quantized_model.eval()
 
-    # Print quantized model.'''
+    # Print quantized model
     #print(quantized_model)
 
 
-    for epoch in range(args.epochs):
+    '''for epoch in range(args.epochs):
         print('epoch no', epoch)
         acc, loss = train(quantized_model, train_loader, args, test_loader)
         print(f"Epoch {epoch}: loss = {loss:4f}, top1_accuracy = {acc*100:4f}, learning_rate = {args.scheduler.get_last_lr()[0]}")
@@ -169,38 +170,40 @@ if __name__ == '__main__':
             if acc > best_acc:
                 print('acc:{}, best_acc:{}'.format(acc,best_acc))
                 best_acc = acc
-                '''save_path = os.path.join(args.dataset, args.save)
+                save_path = os.path.join(args.dataset, args.save)
                 #print(save_path)
                 if not os.path.exists(save_path):
                     os.makedirs(save_path)
                 filename = os.path.join( save_path, "bestmodel.pth.tar")
                 torch.save({'state_dict': model.state_dict(),}, filename)'''
-                "-----------save and perform inference---------------------------------"    
-                model_dir = "/home/jovyan/new-quant-static-vol-1/model/{}/".format(dataset)
-                quantized_model_filename = "{}_quantized_{}.pt".format(model_name, dataset)
-                quantized_model_filepath = os.path.join(model_dir, quantized_model_filename)
-
-                # Save model.
-                save_model(model=quantized_model,
-                        model_dir=model_dir, 
-                        model_filename=quantized_model_filename)
+    "-----------save and perform inference---------------------------------"    
+    #model_dir = "/home/jovyan/new-quant-static-vol-1/model/{}/".format(dataset)
+    #quantized_model_filename = "{}_quantized_{}.pt".format(model_name, dataset)
+    model_dir = "/home/jovyan/new-quant-static-vol-1/model/cifar10/"
+    quantized_model_filename = "resnet20_cifar10_quantized_cifar10.pt"
+    quantized_model_filepath = os.path.join(model_dir, quantized_model_filename)
 
     # Load a pretrained model.
-    model = load_model(model=quantized_model,
+    best_accuracy_model = load_model(model=quantized_model,
                        model_filepath=quantized_model_filepath,
                        device=cuda_device)
+
+    #acc = test(best_quantized_model, test_loader)
+    #print('testing quantized model with int4', acc)
+    
 
     _, fp32_eval_accuracy = evaluate_model(model=model,
                                            test_loader=test_loader,
                                            device=cuda_device,
                                            criterion=None)
-    _, int8_eval_accuracy = evaluate_model(model=quantized_model,
+    
+    _, int8_eval_accuracy = evaluate_model(model=best_accuracy_model,
                                            test_loader=test_loader,
                                            device=cuda_device,
                                            criterion=None)
 
-    print("FP32 evaluation accuracy: {:.3f}".format(fp32_eval_accuracy))
-    print("INT8 evaluation accuracy: {:.3f}".format(int8_eval_accuracy))
+    print("FP32 evaluation accuracy: {:.2f}".format(fp32_eval_accuracy))
+    print("INT8 evaluation accuracy: {:.2f}".format(int8_eval_accuracy))
 
 
     #test inference latency
@@ -209,12 +212,8 @@ if __name__ == '__main__':
     int8_gpu_inference_latency = measure_inference_latency(model=quantized_model, dataset=dataset, num_samples=100, for_inception=False)
     int8_gpu_inference_throughput = measure_throughput(quantized_model, dataset, for_inception=False)
     
-    print("FP32 CUDA Inference Latency: {:.2f} ms / sample".format(
-    fp32_gpu_inference_latency * 1000))
+    print("FP32 CUDA Inference Latency: {:.2f} ms / sample".format(fp32_gpu_inference_latency * 1000))
     print("FP32 CUDA Inference Throughput: {:.2f} FPS / sample".format(fp32_inference_throughput))
-    print("INT8 CUDA Inference Latency: {:.2f} ms / sample".format(
-    int8_gpu_inference_latency * 1000))
+    print("INT8 CUDA Inference Latency: {:.2f} ms / sample".format(int8_gpu_inference_latency * 1000))
     print("Int8 CUDA Inference Throughput: {:.2f} FPS / sample".format(int8_gpu_inference_throughput))
-
-    
-
+    #summary(model, (3,32,32))

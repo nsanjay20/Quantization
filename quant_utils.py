@@ -70,6 +70,28 @@ def linear_dequantize(input, scale, zero_point, inplace=False):
         return input
     return (input + zero_point) / scale
 
+def symmetric_linear_quantization_params(num_bits,
+                                        saturation_min,
+                                        saturation_max,
+                                        per_channel=False):
+    """ Compute the scaling factor and zero-point with given quantization range """
+    '''max_val = max(abs(min_val), abs(max_val))
+    qmin = 0.
+    qmax = 2.**(num_bits-1) - 1.
+
+    scale = max_val / qmax
+
+    return scale, 0'''
+    
+    n = 2 ** (num_bits - 1) - 1
+    if per_channel:
+        scale, _ = torch.max(torch.stack([saturation_min.abs(), saturation_max.abs()], dim=1), dim=1)
+        scale = torch.clamp(scale, min=1e-8) / n
+    else:
+        scale = max(abs(saturation_min), abs(saturation_min))
+        scale = torch.clamp(scale, min=1e-8) / n
+
+    return scale, 0
 
 def asymmetric_linear_quantization_params(num_bits,
                                           saturation_min,
@@ -125,6 +147,7 @@ class AsymmetricQuantFunction_Int(Function):
 
     @staticmethod
     def backward(ctx, grad_output):
+        ''' straight through estimator '''
         return grad_output.clone(), None, None, None
 
 class AsymmetricQuantFunction(Function):
@@ -153,11 +176,14 @@ class AsymmetricQuantFunction(Function):
                                     scale,
                                     zero_point,
                                     inplace=False)
+        visualise(x, axs)
         return torch.autograd.Variable(quant_x)
 
     @staticmethod
     def backward(ctx, grad_output):
         raise NotImplementedError
+
+
 
 """---------- Integer only quantization with back-propogation ---------"""
 def quantize_int(x, k, x_min=None, x_max=None):
@@ -165,7 +191,7 @@ def quantize_int(x, k, x_min=None, x_max=None):
         x_min, x_max = x.min(), x.max()
     scale, zero_point = asymmetric_linear_quantization_params(k, x_min, x_max)
     quantfunc = LinearQuantizeModule()
-    # new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
+    #new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
     new_quant_x = quantfunc(x, scale, zero_point, inplace=False)
     n = 2**(k - 1)
     # new_quant_x = torch.clamp(new_quant_x, -n, n - 1)
@@ -295,3 +321,9 @@ def plot_quantization_loss_conv(input_x, dequant_x):
     ax.set_xlabel("real value")
     ax.set_ylabel("quantization error")
     fig.savefig('/home/jovyan/new-quant-static-vol-3/plots/quant_error_conv_{}.png'.format(input_x.shape))
+
+
+def visualise(x, axs):
+  x = x.view(-1).cpu().numpy()
+  axs.hist(x) 
+
